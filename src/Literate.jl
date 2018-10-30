@@ -30,6 +30,7 @@ mutable struct CodeChunk <: Chunk
     continued::Bool
 end
 CodeChunk() = CodeChunk(String[], false)
+struct BreakChunk <: Chunk end
 
 ismdline(line) = (occursin(r"^\h*#$", line) || occursin(r"^\h*# .*$", line)) && !occursin(r"^\h*##", line)
 
@@ -41,11 +42,14 @@ function parse(content; allow_continued = true)
 
     for line in lines
         line = rstrip(line)
-        # print("line = `$line`: ")
+        # println("line = `$line`")
         if occursin(r"^\h*#-", line) # new chunk
-            # assume same as last chunk, will be cleaned up otherwise
-            push!(chunks, typeof(chunks[end])())
+            # println("    is new chunk")
+            # # assume same as last chunk, will be cleaned up otherwise
+            # push!(chunks, typeof(chunks[end])())
+            push!(chunks, BreakChunk())
         elseif ismdline(line) # markdown
+            # println("    is md")
             if !(chunks[end] isa MDChunk)
                 push!(chunks, MDChunk())
             end
@@ -55,6 +59,7 @@ function parse(content; allow_continued = true)
             linecontent = m.captures[3] === nothing ? "" : convert(String, m.captures[3])
             push!(chunks[end].lines, indent => linecontent)
         else # code
+            # println("    is code")
             if !(chunks[end] isa CodeChunk)
                 push!(chunks, CodeChunk())
             end
@@ -66,10 +71,11 @@ function parse(content; allow_continued = true)
 
     # clean up the chunks
     ## remove empty chunks
-    filter!(x -> !isempty(x.lines), chunks)
-    filter!(x -> !all(y -> isempty(y) || isempty(last(y)), x.lines), chunks)
+    filter!(x -> isa(x, BreakChunk) || !isempty(x.lines), chunks)
+    filter!(x -> isa(x, BreakChunk) || !all(y -> isempty(y) || isempty(last(y)), x.lines), chunks)
     ## remove leading/trailing empty lines
     for chunk in chunks
+        isa(chunk, BreakChunk) && continue
         while isempty(chunk.lines[1]) || isempty(last(chunk.lines[1]))
             popfirst!(chunk.lines)
         end
@@ -114,6 +120,7 @@ function parse(content; allow_continued = true)
         end
         chunks = merged_chunks
     end
+    error()
 
     return chunks
 end
@@ -362,7 +369,7 @@ function markdown(inputfile, outputdir; preprocess = identity, postprocess = ide
             for line in chunk.lines
                 write(iomd, line.second, '\n') # skip indent here
             end
-        else # isa(chunk, CodeChunk)
+        elseif isa(chunk, CodeChunk)
             write(iomd, codefence.first)
             # make sure the code block is finalized if we are printing to ```@example
             if chunk.continued && startswith(codefence.first, "```@example") && documenter
@@ -452,7 +459,7 @@ function notebook(inputfile, outputdir; preprocess = identity, postprocess = ide
             @views map!(x -> x * '\n', lines[1:end-1], lines[1:end-1])
             cell["source"] = lines
             cell["outputs"] = []
-        else # isa(chunk, CodeChunk)
+        elseif isa(chunk, CodeChunk)
             cell["cell_type"] = "code"
             cell["metadata"] = Dict()
             @views map!(x -> x * '\n', chunk.lines[1:end-1], chunk.lines[1:end-1])
